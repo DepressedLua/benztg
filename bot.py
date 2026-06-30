@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 BOT_TOKEN = "8936287356:AAETg9k-oPkXzqPSpu5Rl0UisV1vo_BbT0Q"
-ADMIN_USER_ID = 8936287356:AAETg9k-oPkXzqPSpu5Rl0UisV1vo_BbT0Q  # Твой Telegram ID
+ADMIN_USER_ID = 5454940943  # Твой Telegram ID
 WEBAPP_URL = "https://depressedlua.github.io/benzhtml/"  # URL GitHub Pages
 
 # Настройка логирования
