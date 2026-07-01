@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
+import aiohttp_cors
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))
@@ -200,9 +201,20 @@ async def main():
     asyncio.create_task(broadcaster())
 
     app = web.Application()
-    app.router.add_get('/api/comments', api_get_comments)
-    app.router.add_post('/api/comments', api_add_comment)
-    app.router.add_get('/', health_check)
+    
+    # CORS
+    cors = aiohttp_cors.setup(app, defaults={
+        "*": aiohttp_cors.ResourceOptions(
+            allow_credentials=True,
+            expose_headers="*",
+            allow_headers="*",
+            allow_methods="*"
+        )
+    })
+    
+    cors.add(app.router.add_get('/api/comments', api_get_comments))
+    cors.add(app.router.add_post('/api/comments', api_add_comment))
+    cors.add(app.router.add_get('/', health_check))
 
     runner = web.AppRunner(app)
     await runner.setup()
