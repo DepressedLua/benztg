@@ -18,7 +18,6 @@ PORT = int(os.getenv("PORT", "8000"))
 
 COMMENTS_FILE = Path("comments.json")
 ADS_FILE = Path("ads.json")
-# НОВОЕ: храним пользователей, принявших условия
 ACCEPTED_FILE = Path("accepted_users.json")
 
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +40,6 @@ def save_json(path, data):
 comments_db = load_json(COMMENTS_FILE, {})
 ads_storage = load_json(ADS_FILE, {"ads": [], "interval_hours": 4, "is_active": False, "subscribers": []})
 ads_storage["subscribers"] = set(ads_storage.get("subscribers", []))
-# НОВОЕ: загружаем список принявших условия
 accepted_users = set(load_json(ACCEPTED_FILE, []))
 
 def save_ads():
@@ -74,14 +72,12 @@ async def api_add_comment(request):
 async def health_check(request):
     return web.json_response({"status": "ok"})
 
-# ИЗМЕНЕНО: клавиатура с условиями для новых пользователей
 def disclaimer_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Принимаю условия", callback_data="accept_terms")
     kb.adjust(1)
     return kb.as_markup()
 
-# ИЗМЕНЕНО: основная клавиатура только с картой
 def main_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="🗺 Открыть карту заправок", web_app=WebAppInfo(url=WEBAPP_URL))
@@ -108,24 +104,20 @@ def ads_menu_kb():
     kb.adjust(1)
     return kb.as_markup()
 
-# ИЗМЕНЕНО: приветственное сообщение с условиями
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     ads_storage["subscribers"].add(msg.from_user.id)
     save_ads()
     
     if msg.from_user.id == ADMIN_USER_ID:
-        # Админу сразу показываем панель
         await msg.answer("👑 Админ-панель", reply_markup=admin_kb())
     elif msg.from_user.id in accepted_users:
-        # Уже принял условия - сразу карта
         await msg.answer(
             "⛽ <b>Бензин в Астрахани</b>\n\nГде есть топливо и очереди?\nНажмите кнопку:",
             reply_markup=main_kb(),
             parse_mode="HTML"
         )
     else:
-        # НОВОЕ: показываем дисклеймер
         await msg.answer(
             "⚠️ <b>Важное уведомление</b>\n\n"
             "Данный сервис предоставляет информацию о заправках на основе пользовательских данных.\n\n"
@@ -139,7 +131,6 @@ async def start(msg: types.Message):
             parse_mode="HTML"
         )
 
-# НОВОЕ: обработчик принятия условий
 @dp.callback_query(F.data == "accept_terms")
 async def accept_terms(cb: types.CallbackQuery):
     accepted_users.add(cb.from_user.id)
@@ -171,6 +162,31 @@ async def show_terms(msg: types.Message):
         reply_markup=disclaimer_kb(),
         parse_mode="HTML"
     )
+
+@dp.message(Command("clear_comments"))
+async def clear_comments(msg: types.Message):
+    """Очистить комментарии. Без аргументов - все, с ID - конкретную заправку"""
+    if msg.from_user.id != ADMIN_USER_ID:
+        return await msg.answer("⛔ Нет доступа")
+    
+    args = msg.text.split()
+    
+    if len(args) == 1:
+        # Очистить всё
+        count = sum(len(v) for v in comments_db.values())
+        comments_db.clear()
+        save_json(COMMENTS_FILE, comments_db)
+        await msg.answer(f"✅ Удалены все комментарии ({count} шт.)")
+    else:
+        # Очистить конкретную заправку
+        station_id = args[1]
+        if station_id in comments_db:
+            count = len(comments_db[station_id])
+            del comments_db[station_id]
+            save_json(COMMENTS_FILE, comments_db)
+            await msg.answer(f"✅ Удалены комментарии заправки {station_id} ({count} шт.)")
+        else:
+            await msg.answer(f"❌ Заправка {station_id} не найдена")
 
 @dp.message(Command("admin"))
 async def admin(msg: types.Message):
