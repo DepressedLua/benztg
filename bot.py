@@ -18,6 +18,8 @@ PORT = int(os.getenv("PORT", "8000"))
 
 COMMENTS_FILE = Path("comments.json")
 ADS_FILE = Path("ads.json")
+# НОВОЕ: храним пользователей, принявших условия
+ACCEPTED_FILE = Path("accepted_users.json")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,9 +41,14 @@ def save_json(path, data):
 comments_db = load_json(COMMENTS_FILE, {})
 ads_storage = load_json(ADS_FILE, {"ads": [], "interval_hours": 4, "is_active": False, "subscribers": []})
 ads_storage["subscribers"] = set(ads_storage.get("subscribers", []))
+# НОВОЕ: загружаем список принявших условия
+accepted_users = set(load_json(ACCEPTED_FILE, []))
 
 def save_ads():
     save_json(ADS_FILE, {**ads_storage, "subscribers": list(ads_storage["subscribers"])})
+
+def save_accepted():
+    save_json(ACCEPTED_FILE, list(accepted_users))
 
 async def api_get_comments(request):
     sid = request.query.get('station_id')
@@ -67,9 +74,18 @@ async def api_add_comment(request):
 async def health_check(request):
     return web.json_response({"status": "ok"})
 
+# ИЗМЕНЕНО: клавиатура с условиями для новых пользователей
+def disclaimer_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Принимаю условия", callback_data="accept_terms")
+    kb.adjust(1)
+    return kb.as_markup()
+
+# ИЗМЕНЕНО: основная клавиатура только с картой
 def main_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="🗺 Открыть карту заправок", web_app=WebAppInfo(url=WEBAPP_URL))
+    kb.adjust(1)
     return kb.as_markup()
 
 def admin_kb():
@@ -92,14 +108,69 @@ def ads_menu_kb():
     kb.adjust(1)
     return kb.as_markup()
 
+# ИЗМЕНЕНО: приветственное сообщение с условиями
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     ads_storage["subscribers"].add(msg.from_user.id)
     save_ads()
+    
     if msg.from_user.id == ADMIN_USER_ID:
+        # Админу сразу показываем панель
         await msg.answer("👑 Админ-панель", reply_markup=admin_kb())
+    elif msg.from_user.id in accepted_users:
+        # Уже принял условия - сразу карта
+        await msg.answer(
+            "⛽ <b>Бензин в Астрахани</b>\n\nГде есть топливо и очереди?\nНажмите кнопку:",
+            reply_markup=main_kb(),
+            parse_mode="HTML"
+        )
     else:
-        await msg.answer("⛽ <b>Бензин в Астрахани</b>\n\nГде есть топливо и очереди?\nНажмите кнопку:", reply_markup=main_kb(), parse_mode="HTML")
+        # НОВОЕ: показываем дисклеймер
+        await msg.answer(
+            "⚠️ <b>Важное уведомление</b>\n\n"
+            "Данный сервис предоставляет информацию о заправках на основе пользовательских данных.\n\n"
+            "📌 <b>Мы не собираем и не храним:</b>\n"
+            "• Личные данные пользователей\n"
+            "• Геолокацию\n"
+            "• Контактную информацию\n\n"
+            "📌 Сервис <b>не требует регистрации</b> и работает анонимно.\n\n"
+            "Нажимая кнопку ниже, вы подтверждаете, что ознакомлены с условиями использования.",
+            reply_markup=disclaimer_kb(),
+            parse_mode="HTML"
+        )
+
+# НОВОЕ: обработчик принятия условий
+@dp.callback_query(F.data == "accept_terms")
+async def accept_terms(cb: types.CallbackQuery):
+    accepted_users.add(cb.from_user.id)
+    save_accepted()
+    
+    await cb.message.delete()
+    await cb.message.answer(
+        "✅ <b>Условия приняты!</b>\n\n"
+        "⛽ <b>Бензин в Астрахани</b>\n"
+        "Где есть топливо и очереди?\n"
+        "Нажмите кнопку ниже:",
+        reply_markup=main_kb(),
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+@dp.message(Command("terms"))
+async def show_terms(msg: types.Message):
+    """Показать условия использования повторно"""
+    await msg.answer(
+        "⚠️ <b>Условия использования</b>\n\n"
+        "📌 <b>Мы не собираем:</b>\n"
+        "• Личные данные\n"
+        "• Геолокацию\n"
+        "• Контакты\n\n"
+        "📌 Без регистрации\n"
+        "📌 Анонимное использование\n\n"
+        "Нажимая «Принимаю», вы подтверждаете ознакомление.",
+        reply_markup=disclaimer_kb(),
+        parse_mode="HTML"
+    )
 
 @dp.message(Command("admin"))
 async def admin(msg: types.Message):
@@ -178,10 +249,12 @@ async def stats(cb: types.CallbackQuery):
     if cb.from_user.id != ADMIN_USER_ID: return
     total = sum(len(v) for v in comments_db.values())
     await cb.message.edit_text(
-        f"📊 Статистика\n\n👥 Подписчиков: {len(ads_storage['subscribers'])}\n"
+        f"📊 Статистика\n\n"
+        f"👥 Подписчиков: {len(ads_storage['subscribers'])}\n"
         f"📢 Постов: {len(ads_storage['ads'])}\n"
         f"💬 Комментариев: {total}\n"
-        f"🔄 Рассылка: {'✅' if ads_storage['is_active'] else '❌'}"
+        f"🔄 Рассылка: {'✅' if ads_storage['is_active'] else '❌'}\n"
+        f"✅ Приняли условия: {len(accepted_users)}"
     )
 
 async def broadcaster():
@@ -202,7 +275,6 @@ async def main():
 
     app = web.Application()
     
-    # CORS
     cors = aiohttp_cors.setup(app, defaults={
         "*": aiohttp_cors.ResourceOptions(
             allow_credentials=True,
